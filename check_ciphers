@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+# Check valid ciphers for a given address
+#
+# Author: Tyler Yahn
+
+
+readonly PROGNAME="$( basename "$0" )"
+
+check_cipher() {
+    local cipher="$1"
+    local server="$2"
+    local result error
+
+    result="$( echo -n | openssl s_client -cipher "$cipher" -connect "$server" 2>&1 )"
+    if [[ "$result" =~ :error: ]]
+    then
+        error="$( echo -n "$result" | cut -d':' -f6 | cut -d$'\n' -f1 )"
+        _echo "${cipher}: NOT SUPPORTED (${error})" "TRUE"
+    else
+        if [[ "$result" =~ Cipher\ is\ "${cipher}" || "$result" =~ Cipher\ \ \ \ : ]]
+        then
+            _echo "${cipher}: SUPPORTED"
+        else
+            _echo "${cipher}: UNKNOWN RESPONSE"
+            _echo "$result" "TRUE"
+        fi
+    fi
+}
+
+list_ciphers() {
+    local server="$1"
+    local cipher
+    local ciphers=$( openssl ciphers 'ALL:eNULL' | sed -e 's/:/ /g' )
+
+    _echo "Using cipher list from $( openssl version ):" "TRUE"
+
+    for cipher in $ciphers
+    do
+        check_cipher "$cipher" "$server" &
+
+        if [ "$DELAY" != "0" ]
+        then
+            sleep "$DELAY"
+        fi
+    done
+
+    wait
+}
+
+_echo() {
+    local msg="$1"
+    local only_if_verbose="${2:-"FALSE"}"
+
+    if [ "$only_if_verbose" != "FALSE" -a "$VERBOSE" -eq 1 ]
+    then
+        echo -e "$msg"
+    elif [ "$only_if_verbose" == "FALSE" ]
+    then
+        echo -e "$msg"
+    fi
+}
+
+usage() {
+    cat <<-EOF
+	Usage: $PROGNAME [OPTIONS] ADDR:PORT
+
+	Runs an openssl check for all supported ciphers against ADDR on PORT.
+
+	OPTIONS:
+	    -d --delay			Seconds dealy between checks [0]
+	    -v --verbose		Verbose
+	    -h --help			Show this help message
+	EOF
+}
+
+parse_opts() {
+    # Make sure getopts starts at the begining
+    OPTIND=1
+
+    local deliminator option
+    local arg=
+
+    # Translate --gnu-long-options to -g (short options)
+    for arg
+    do
+        deliminator=""
+        case "$arg" in
+            --delay)
+                args="${args}-d "
+                ;;
+            --verbose)
+                args="${args}-v "
+                ;;
+            --help)
+                args="${args}-h "
+                ;;
+            *)
+                [[ "${arg:0:1}" == "-" ]] || deliminator='"'
+                args="${args}${deliminator}${arg}${deliminator} "
+                ;;
+        esac
+    done
+
+    # Reset the positional parameters to start parsing short options
+    eval set -- "$args"
+
+    while getopts ":d:vh" option
+    do
+        case "$option" in
+            d)
+                readonly DELAY="$OPTARG"
+                ;;
+            v)
+                readonly VERBOSE=1
+                ;;
+            h)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Invalid option: -${option}" >&2
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    # Default values
+    [ -z "${VERBOSE}" ] \
+        && readonly VERBOSE=0
+    [ -z "${DELAY}" ] \
+        && readonly DELAY=0
+
+    return 0
+}
+
+main() {
+    # Check dependencies
+    hash openssl 2>/dev/null\
+        || { echo >&2 "Requrired openssl client not found"; exit 1; }
+
+    parse_opts "$@"
+
+    # Shift to ADDR:PORT
+    shift $(( OPTIND-1 ))
+
+    if [ -z "$@" ]
+    then
+        echo "Missing ADDR:PORT"
+        usage
+        exit 1
+    fi
+
+    list_ciphers "$@"
+}
+
+main "$@"
