@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# Print per user percent of memory used
+#
+# Author: Tyler Yahn <codingalias@gmail.com>
+
+
+max_str_length() {
+    local strings=( "$@" )
+    local max=0
+    local string size
+
+    for string in "${strings[@]}"
+    do
+        size=${#string}
+        if [ $size -gt $max ]
+        then
+            max=$size
+        fi
+    done
+
+    echo $max
+}
+
+main() {
+    local tot_mem=$( free | awk '/Mem:/ { print $2 }' )
+    local users=$( cut -d: -f1 /etc/passwd )
+    local max_user_len=$( max_str_length $users )
+    local max_mem_len=$( max_str_length "$tot_mem" )
+    local user
+
+    for user in $users
+    do
+        ps hu -U "$user" \
+            | awk -v m_len="$max_mem_len" -v u_len="$max_user_len" -v user="$user" -v total="$tot_mem" '
+        {
+            sum += $6
+        } END {
+            printf "%*s: %*.0f kB (%.2f%%)\n", u_len, user, m_len, sum, sum / total * 100;
+        }'
+    done
+}
+
+main "$@"
